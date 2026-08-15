@@ -1,0 +1,5 @@
+node_modules/
+# Certificates are generated per install and must never be committed:
+# a shared private key would be identical for every user.
+certs/
+*.pem

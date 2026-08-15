@@ -1,0 +1,41 @@
+name: AOHI Local Server
+version: "0.1.0"
+slug: aohi_local_server
+description: Run AOHI smart chargers entirely on your local network, with no cloud
+url: https://github.com/louisremi/ha-aohi-local-server
+arch:
+  - aarch64
+  - amd64
+  - armv7
+
+# Chargers connect in to this add-on from the LAN, and the certificate is issued
+# for the host's own address, so it needs the host's network directly rather
+# than a bridged one.
+host_network: true
+
+startup: services
+boot: auto
+
+# The generated certificate lives in /data so it survives add-on updates.
+map:
+  - data:rw
+
+options:
+  lan_ip: ""
+  http_port: 8099
+  mqtt_port: 8098
+  weather_city: Local
+  weather_tz: UTC
+  weather_offset: 0
+  verbose: false
+
+schema:
+  # Blank means "detect the first non-internal IPv4 address", which is right on
+  # a single-homed machine. Set it explicitly if the host has several networks.
+  lan_ip: str?
+  http_port: port
+  mqtt_port: port
+  weather_city: str
+  weather_tz: str
+  weather_offset: int(-43200,50400)
+  verbose: bool
