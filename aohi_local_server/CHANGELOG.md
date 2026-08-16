@@ -22,6 +22,8 @@ used to invite.
 Pairing instructions also corrected: a **short press** reaches pairing mode and keeps the charger's
 current configuration, and new endpoints only apply after a **power-cycle**.
 
+The add-on also has an icon and logo now, instead of a blank placeholder in the store.
+
 ## 0.1.1
 
 Fixes the add-on failing to start with `s6-overlay-suexec: fatal: can only run as pid 1`.
