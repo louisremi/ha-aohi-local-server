@@ -22,9 +22,14 @@ used to invite.
 Two further additions: a **copy button for the log**, since provisioning is easiest on a phone but
 reading a log is not, and a **step 4** covering what to do in Home Assistant afterwards.
 
-Pairing instructions corrected as well. A **factory reset is required** — a short press makes the
-charger connectable and it will acknowledge new endpoints, but it discards them. New endpoints then
-only apply after a **power-cycle**.
+**The tool now actually completes provisioning.** `SetCloudHost` on its own is acknowledged and
+then discarded — the charger commits new endpoints only while completing its WiFi setup — so the
+tool now sends `ConnectWiFi` straight after them. This was the reason endpoints appeared to be
+written successfully and then had no effect whatsoever.
+
+Reading **WiFi config** in step 2 fills the credentials in from the charger itself, so an
+already-provisioned charger can be re-pointed without a factory reset and without knowing the WiFi
+password.
 
 The add-on also has an icon and logo now, instead of a blank placeholder in the store.
 

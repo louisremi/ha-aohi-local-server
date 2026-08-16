@@ -114,10 +114,10 @@
       <label style="margin:0"><input type="checkbox" id="optAllDevices"> show all BLE devices</label>
     </div>
     <div class="sub" style="margin-top:8px">
-      <b>Factory reset the charger first</b> — hold its button until it resets. A short press also
-      makes it appear here and answer normally, but anything you write in that state is
-      acknowledged and then <b>silently discarded</b>: only a factory-reset charger stores new
-      endpoints.
+      Put the charger into pairing mode first. A short press is enough — but be aware that new
+      endpoints are only committed when the charger completes its WiFi setup, so this tool always
+      sends the WiFi credentials straight after them. Writing endpoints on their own is
+      acknowledged and then <b>silently discarded</b>.
       <br><br>
       It advertises as <code>AOC-C022-&lt;xx&gt;</code> (older units may use <code>7231N</code>);
       tick the box above if it doesn't appear.
@@ -168,8 +168,22 @@
       <div class="kv" id="framePreview" style="margin-top:12px">—</div>
     </div>
 
+    <label style="margin-top:16px">WiFi network <span class="count" id="cSsid">0/32</span></label>
+    <input type="text" id="ssid" maxlength="32" placeholder="your 2.4GHz network"
+           autocomplete="off">
+
+    <label>WiFi password <span class="count" id="cPw">0/32</span></label>
+    <input type="password" id="wifiPw" maxlength="32" autocomplete="off">
+    <label style="margin-top:6px"><input type="checkbox" id="optShowPw"> show password</label>
+
+    <div class="derived" id="wifiNote">
+      The charger only stores new endpoints as part of completing its WiFi setup, so these are sent
+      straight after. Run <b>WiFi config</b> in step 2 first and they fill in from the charger
+      itself — after a factory reset they will be empty and you'll need to type them.
+    </div>
+
     <div class="row" style="margin-top:14px">
-      <button class="danger" id="btnSet">Write these endpoints</button>
+      <button class="danger" id="btnSet">Write endpoints and connect</button>
     </div>
 
     <div class="sub" style="margin-top:12px">
@@ -245,7 +259,10 @@ const NOTIFY_UUID = '00001234-0000-1000-8000-00805f9b34fb';
 // byte of the WiFi MAC), not the '7231N' the upstream tool filters on.
 const NAME_PREFIXES = ['AOC-', '7231N'];
 
-const CMD = { INFO:0x01, STATUS:0x03, WIFI_CFG:0x09, SET_CLOUD:0x10 };
+const CMD = { INFO:0x01, STATUS:0x03, CONNECT_WIFI:0x05, WIFI_CFG:0x09, SET_CLOUD:0x10 };
+
+const WIFI_FIELD = 33;   // bytes reserved per credential
+const WIFI_MAX   = 32;   // usable chars (1 byte reserved for the NUL terminator)
 
 const HOST_FIELD  = 39;   // bytes reserved per URL
 const HOST_MAX    = 38;   // usable chars (1 byte reserved for the NUL terminator)
@@ -288,6 +305,20 @@ function cstr(a, off, n){
   for(let i=off;i<off+n && i<a.length;i++){ if(!a[i]) break; s+=String.fromCharCode(a[i]); }
   return s;
 }
+/** ConnectWiFi: SSID and password in two 33-byte NUL-padded fields (66 bytes).
+ *  Same layout as the first 66 bytes of the cmd 0x09 reply, which is how it was
+ *  verified: reading the config back yields exactly these offsets. */
+function wifiPayload(ssid, pw){
+  const out = new Array(WIFI_FIELD * 2).fill(0);
+  [ssid, pw].forEach((s, i)=>{
+    const bytes = new TextEncoder().encode(s || '');
+    if(bytes.length > WIFI_MAX)
+      throw new Error(`${i ? 'password' : 'SSID'} is ${bytes.length} bytes, max ${WIFI_MAX}`);
+    bytes.forEach((b, j)=> out[i*WIFI_FIELD + j] = b);
+  });
+  return out;
+}
+
 /** 3 x 39-byte NUL-padded URL fields. */
 function cloudPayload(h1,h2,h3){
   const out = new Array(CLOUD_LEN).fill(0);
@@ -382,6 +413,11 @@ function decodeReply(p){
   if(p.cmd===CMD.WIFI_CFG && b.length>=67){
     const o = {ssid:cstr(b,0,33), password:cstr(b,33,33), status:b[66]};
     backup.wifi = o;
+    // Prefill the credentials so an already-provisioned charger can be re-pointed
+    // without the user having to retype anything.
+    if(o.ssid && !$('ssid').value){ $('ssid').value = o.ssid; }
+    if(o.password && !$('wifiPw').value){ $('wifiPw').value = o.password; }
+    updateCounts();
     return `<b>wifi</b> ssid="${o.ssid}" password="${o.password}" status=${o.status}`;
   }
   if(p.cmd===CMD.STATUS && b.length>=1){
@@ -415,7 +451,7 @@ function onNotify(ev){
     rxBuf = rxBuf.slice(total);
     log('rx','RX '+hex(frame).toUpperCase(), describe(frame));
     const p = parseFrame(frame);
-    if(p && p.cmd===CMD.SET_CLOUD && awaitingAck){ awaitingAck(); awaitingAck = null; }
+    if(p && awaitingAck) awaitingAck(p.cmd);
     while(rxBuf.length>=2 && !(rxBuf[0]===0x55 && rxBuf[1]===0xAA)) rxBuf.shift();
   }
 }
@@ -576,6 +612,12 @@ function updateCounts(){
     $(h).classList.toggle('over', n>HOST_MAX);
     if(n>HOST_MAX) ok=false;
   });
+  [['ssid','cSsid'],['wifiPw','cPw']].forEach(([h,c])=>{
+    const n = new TextEncoder().encode($(h).value).length;
+    $(c).textContent = `${n}/${WIFI_MAX}`;
+    $(c).classList.toggle('over', n>WIFI_MAX);
+    if(n>WIFI_MAX) ok=false;
+  });
   try{
     const f = buildFrame(CMD.SET_CLOUD, txIdx,
                          cloudPayload($('host1').value,$('host2').value,$('host3').value));
@@ -583,30 +625,43 @@ function updateCounts(){
   }catch(e){ $('framePreview').textContent = '— ' + e.message; ok=false; }
   $('btnSet').disabled = !ok;
 }
-['host1','host2','host3'].forEach(id=>$(id).addEventListener('input',updateCounts));
+['host1','host2','host3','ssid','wifiPw'].forEach(id=>$(id).addEventListener('input',updateCounts));
 
-async function writeCloud(h1,h2,h3){
+/** Send one command and wait for the charger to acknowledge that same cmd. */
+async function sendAwaitingAck(cmd, payload){
+  const acked = new Promise(res=>{
+    awaitingAck = c => { if(c === cmd) res(true); };
+    setTimeout(()=>res(false), 3000);
+  });
+  try{ await send(cmd, payload); return await acked; }
+  finally{ awaitingAck = null; }
+}
+
+async function writeCloud(h1,h2,h3,ssid,pw){
   if(!hasRead){ log('err','Read the configuration first (step 2).'); return; }
   if(!confirm(`Point the charger at a custom endpoint?\n\n` +
-              `host1: ${h1}\nhost2: ${h2}\nhost3: ${h3 || '(empty)'}\n\n` +
+              `host1: ${h1}\nhost2: ${h2}\nhost3: ${h3 || '(empty)'}\nWiFi:  ${ssid}\n\n` +
               `This overwrites persistent configuration on the charger, and the official AOHI ` +
               `app will no longer see it. Continue?`)) return;
   try{
-    // The charger answers a SetCloudHost with an empty cmd 0x10 frame. Waiting for it
-    // turns "the write silently did nothing" into something visible.
-    const acked = new Promise(res=>{
-      awaitingAck = ()=>res(true);
-      setTimeout(()=>res(false), 2000);
-    });
-    await send(CMD.SET_CLOUD, cloudPayload(h1,h2,h3));
-    if(await acked){
-      log('info','✅ Charger acknowledged the new endpoints. <b>Now power-cycle it</b> — they ' +
-                 'do not take effect until it reboots. Then check the add-on log for ' +
-                 '"issued broker credentials to &lt;serial&gt;".');
-    } else {
-      log('err','⚠️ Sent, but the charger did not acknowledge it within 2s. Assume nothing was ' +
-                'stored: reconnect and try again rather than power-cycling.');
+    // Two commands, in this order. SetCloudHost on its own is acknowledged and then
+    // discarded -- the charger only commits the new endpoints as part of completing
+    // its WiFi setup, so ConnectWiFi has to follow it.
+    if(!await sendAwaitingAck(CMD.SET_CLOUD, cloudPayload(h1,h2,h3))){
+      log('err','⚠️ The charger did not acknowledge the endpoints within 3s. Nothing was stored; ' +
+                'reconnect and try again.');
+      return;
     }
+    log('info','Endpoints acknowledged. Sending WiFi credentials to commit them…');
+
+    if(!await sendAwaitingAck(CMD.CONNECT_WIFI, wifiPayload(ssid, pw))){
+      log('err','⚠️ The charger did not acknowledge the WiFi credentials within 3s. The endpoints ' +
+                'were probably <b>not</b> committed — reconnect and try again.');
+      return;
+    }
+    log('info','✅ Both accepted. The charger should now join WiFi and connect to your server. ' +
+               'If it does not within a couple of minutes, <b>power-cycle it</b>, then check the ' +
+               'add-on log for "issued broker credentials to &lt;serial&gt;".');
   }catch(e){ log('err','Write failed: '+e.message); }
   finally{ awaitingAck = null; }
 }
@@ -633,8 +688,21 @@ $('btnSet').onclick = ()=>{
               'error, so the charger would simply appear dead.');
     return;
   }
-  writeCloud(h1, h2, $('optAdvanced').checked ? $('host3').value.trim() : '');
+  const ssid = $('ssid').value, pw = $('wifiPw').value;
+  // Without credentials the charger has nothing to complete provisioning with, and
+  // the endpoints above would be discarded exactly as they were before this existed.
+  if(!ssid){
+    log('err','A WiFi network is required. The charger only commits new endpoints while ' +
+              'completing its WiFi setup — run <b>WiFi config</b> in step 2 to fill these in ' +
+              'from the charger, or type them if it has just been factory reset.');
+    return;
+  }
+  writeCloud(h1, h2, $('optAdvanced').checked ? $('host3').value.trim() : '', ssid, pw);
 };
+
+$('optShowPw').addEventListener('change', e=>{
+  $('wifiPw').type = e.target.checked ? 'text' : 'password';
+});
 
 /* ---------- boot ---------- */
 if(!navigator.bluetooth){

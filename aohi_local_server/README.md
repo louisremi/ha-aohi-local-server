@@ -36,9 +36,10 @@ whether this suits you.
 ## Pairing a charger
 
 1. Start the add-on and read its log; it prints the address to use.
-2. **Factory reset the charger** so it advertises over Bluetooth. This matters: a short press also
-   makes it connectable, but endpoints written in that state are acknowledged and then silently
-   discarded. Only a factory-reset charger stores them.
+2. Put the charger into pairing mode so it advertises over Bluetooth — a short press is enough.
+   New endpoints are only committed when the charger completes its WiFi setup, so the tool sends
+   your WiFi credentials straight after them; run its **WiFi config** read first and it fills them
+   in from the charger itself.
 3. Open the **[BLE provisioning tool](https://louisremi.github.io/ha-aohi-local-server/)** and
    enter your Home Assistant machine's address. It fills in the endpoints for you.
 
