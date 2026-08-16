@@ -1,9 +1,18 @@
 {
   "name": "aohi-local-server",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Run AOHI smart chargers entirely on your local network",
   "main": "server.js",
-  "scripts": { "start": "node server.js" },
-  "dependencies": { "ws": "^8.18.0" }
+  "scripts": {
+    "start": "node server.js",
+    "lint": "eslint .",
+    "syntax": "node --check server.js && node --check mqtt.js && node --check check.js"
+  },
+  "dependencies": { "ws": "^8.18.0" },
+  "devDependencies": {
+    "@eslint/js": "^9.15.0",
+    "eslint": "^9.15.0",
+    "globals": "^15.12.0"
+  }
 }

@@ -1,0 +1,76 @@
+name: Validate
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  addon:
+    name: Add-on configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: frenck/action-addon-linter@v2
+        with:
+          path: "./aohi_local_server"
+
+  lint:
+    name: Lint (eslint + syntax)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        node-version: ["20", "22"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+      - name: Install dependencies
+        run: npm ci
+        working-directory: aohi_local_server
+      - name: ESLint
+        run: npm run lint
+        working-directory: aohi_local_server
+      - name: Syntax check
+        run: npm run syntax
+        working-directory: aohi_local_server
+
+  build:
+    name: Build and boot
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build -t aohi-local-server:ci ./aohi_local_server
+
+      # The image building is not enough on its own: the add-on once shipped a
+      # config.yaml missing `init: false`, which builds perfectly and then dies
+      # on start with "s6-overlay-suexec: fatal: can only run as pid 1". Booting
+      # it here is what catches that class of failure. No --init, matching the
+      # Supervisor's behaviour when init is false.
+      - name: Boot it and wait for both listeners
+        run: |
+          mkdir -p /tmp/data
+          echo '{"lan_ip":"127.0.0.1","http_port":8099,"mqtt_port":8098,
+                 "weather_city":"Local","weather_tz":"UTC","weather_offset":0,
+                 "verbose":false}' > /tmp/data/options.json
+          docker run -d --name aohi-ci -v /tmp/data:/data \
+            -p 8099:8099 -p 8098:8098 aohi-local-server:ci
+
+          for _ in $(seq 1 30); do
+            if curl -sf -m 2 http://127.0.0.1:8099/time/second >/dev/null; then
+              echo "bootstrap endpoint is up"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "server never came up; container log follows:" >&2
+          docker logs aohi-ci >&2
+          exit 1
+
+      - name: Show the log
+        if: always()
+        run: docker logs aohi-ci || true
