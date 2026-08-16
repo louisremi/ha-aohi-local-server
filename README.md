@@ -35,20 +35,20 @@ whether this suits you.
 
 ## Pairing a charger
 
-1. Start the add-on and read its log; it prints the two values you need.
-2. Factory reset the charger so it advertises over Bluetooth.
-3. Use the
-   [BLE provisioning tool](https://louisremi.github.io/ha-aohi-charger/tools/aohi-ble-provisioning.html)
-   (Chrome or Edge) to set:
+1. Start the add-on and read its log; it prints the address to use.
+2. Put the charger into pairing mode so it advertises over Bluetooth. A short press is enough and
+   keeps its current configuration; a factory reset also works and additionally returns it to
+   AOHI's cloud.
+3. Open the **[BLE provisioning tool](https://louisremi.github.io/ha-aohi-local-server/)** and
+   enter your Home Assistant machine's address. It fills in the endpoints for you.
 
-   | Field | Value |
-   |---|---|
-   | host1 | `http://<home-assistant-ip>:8099` |
-   | host2 | `wss://<home-assistant-ip>:8098/ws/` |
+   Use **Android + Chrome** if you can — desktop Web Bluetooth is patchier, and Brave has it
+   switched off by default. The tool's own page explains this.
+4. Give it your WiFi credentials in the same tool.
+5. **Power-cycle the charger.** New endpoints do not take effect until it reboots.
 
-   Both must be **38 characters or fewer**, which a LAN address satisfies comfortably.
-4. Give it your WiFi credentials in the same tool. It should appear in the add-on log within a
-   minute or two.
+It should appear in the add-on log within a minute or two, as
+`issued broker credentials to <serial>`.
 
 ## Options
 

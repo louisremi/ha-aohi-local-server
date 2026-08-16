@@ -1,0 +1,517 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AOHI charger — BLE endpoint provisioning</title>
+<style>
+  :root{
+    --bg:#14161a; --panel:#1c1f26; --panel2:#232732; --fg:#e8eaf0; --muted:#9aa3b2;
+    --line:#2e3440; --accent:#ffd400; --ok:#3ddc84; --warn:#ffb020; --err:#ff5c5c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+       font:14px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+  header{padding:20px;border-bottom:1px solid var(--line)}
+  h1{margin:0 0 4px;font-size:19px}
+  h2{margin:0 0 12px;font-size:15px}
+  .sub{color:var(--muted);font-size:12px}
+  main{max-width:920px;margin:0 auto;padding:20px;display:grid;gap:16px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+  .card.disabled{opacity:.45;pointer-events:none}
+  .banner{border-left:4px solid var(--warn);background:#2a2213;padding:12px 14px;border-radius:6px}
+  .banner.danger{border-left-color:var(--err);background:#2b1618}
+  .step{display:inline-block;background:var(--accent);color:#111;font-weight:700;
+        border-radius:999px;width:22px;height:22px;text-align:center;line-height:22px;
+        font-size:12px;margin-right:8px}
+  button{background:var(--panel2);color:var(--fg);border:1px solid var(--line);
+         border-radius:7px;padding:9px 14px;font-size:13px;cursor:pointer}
+  button:hover:not(:disabled){border-color:var(--accent)}
+  button:disabled{opacity:.4;cursor:not-allowed}
+  button.primary{background:var(--accent);color:#111;border-color:var(--accent);font-weight:600}
+  button.danger{border-color:var(--err);color:#ffb3b3}
+  label{display:block;margin:10px 0 4px;font-size:12px;color:var(--muted)}
+  input[type=text]{width:100%;background:#12141a;color:var(--fg);border:1px solid var(--line);
+                   border-radius:6px;padding:8px 10px;font-family:ui-monospace,monospace;font-size:13px}
+  input.over{border-color:var(--err)}
+  .count{float:right;font-family:ui-monospace,monospace;font-size:11px;color:var(--muted)}
+  .count.over{color:var(--err);font-weight:700}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .muted{color:var(--muted)}
+  .kv{font-family:ui-monospace,monospace;font-size:12px;background:#12141a;
+      border:1px solid var(--line);border-radius:6px;padding:10px;margin-top:10px;
+      white-space:pre-wrap;word-break:break-all}
+  #log{height:280px;overflow:auto;background:#0f1116;border:1px solid var(--line);
+       border-radius:6px;padding:10px;font-family:ui-monospace,monospace;font-size:11.5px}
+  .le{padding:2px 0;border-bottom:1px solid #191c23}
+  .le .t{color:#5b6472;margin-right:6px}
+  .tx{color:#7fb3ff} .rx{color:var(--ok)} .err{color:var(--err)} .info{color:var(--muted)}
+  .parse{color:#c9d1e0;padding-left:16px}
+  code{background:#12141a;padding:1px 5px;border-radius:4px;font-size:12px}
+  a{color:var(--accent)}
+  table.browsers{border-collapse:collapse;margin-top:8px;font-size:12.5px}
+  table.browsers td{padding:3px 12px 3px 0;vertical-align:top}
+  table.browsers td.ok{color:var(--ok)} table.browsers td.warn{color:var(--warn)}
+  table.browsers td.err{color:var(--err)}
+  input[type=text]:disabled{opacity:.75;background:#0f1116;cursor:not-allowed}
+  .derived{color:var(--muted);font-size:11.5px;margin-top:2px}
+  [hidden]{display:none !important}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>AOHI charger — BLE endpoint provisioning</h1>
+  <div class="sub">
+    Points an AOHI charger at the
+    <a href="https://github.com/louisremi/ha-aohi-local-server">AOHI Local Server</a> add-on instead
+    of AOHI's cloud, for use with the
+    <a href="https://github.com/louisremi/ha-aohi-charger">ha-aohi-charger</a> integration.
+    Protocol reverse engineering by
+    <a href="https://github.com/atc1441/AOHi_280W_Charger_Hacking">atc1441</a>.
+  </div>
+</header>
+
+<main>
+
+  <div class="banner">
+    <b>Which browser?</b> This needs Web Bluetooth, which is not available everywhere.
+    <table class="browsers">
+      <tr><td><b>Android + Chrome</b></td><td class="ok">Recommended — the reliable path</td></tr>
+      <tr><td>Desktop Chrome / Edge</td><td>Works. On Linux it needs BlueZ and is often flaky</td></tr>
+      <tr><td><b>Brave</b></td><td class="warn">Web Bluetooth is <b>off by default</b> — enable it
+        at <code>brave://flags</code>, then restart the browser</td></tr>
+      <tr><td>Firefox / Safari</td><td class="err">Not supported, and there is no flag for it</td></tr>
+    </table>
+    <div class="sub" style="margin-top:8px">
+      The page must also be served over HTTPS or opened as a local <code>file://</code>.
+    </div>
+  </div>
+
+  <div class="banner danger">
+    <b>⚠️ Read before using.</b>
+    <ul style="margin:8px 0 0;padding-left:18px">
+      <li>This rewrites <b>persistent configuration</b> on your charger, and afterwards the
+          official AOHI app will no longer see it.</li>
+      <li>Going back means a <b>factory reset</b> and re-adding it in the app, which rewrites the
+          endpoints for you. There is no undo button here: the factory values cannot be read back
+          from the device, so anything this tool wrote as a "restore" would be a guess.</li>
+      <li>New endpoints only take effect after the charger is <b>power-cycled</b>.</li>
+      <li>Nothing here is needed for normal use — the cloud integration works without it.</li>
+    </ul>
+  </div>
+
+  <!-- 1. connect -->
+  <div class="card" id="cardConnect">
+    <h2><span class="step">1</span>Connect</h2>
+    <div class="row">
+      <button class="primary" id="btnConnect">Connect to charger</button>
+      <button id="btnDisconnect" disabled>Disconnect</button>
+      <label style="margin:0"><input type="checkbox" id="optAllDevices"> show all BLE devices</label>
+    </div>
+    <div class="sub" style="margin-top:8px">
+      Put the charger in pairing mode first. It advertises as <code>AOC-C022-&lt;xx&gt;</code>
+      (older units may use <code>7231N</code>); tick the box above if it doesn't appear.
+    </div>
+    <div class="kv" id="connInfo" hidden></div>
+  </div>
+
+  <!-- 2. read -->
+  <div class="card disabled" id="cardRead">
+    <h2><span class="step">2</span>Read current configuration</h2>
+    <div class="sub">Safe, read-only. Required before any write is unlocked.</div>
+    <div class="row" style="margin-top:10px">
+      <button id="btnInfo">Device info</button>
+      <button id="btnWifi">WiFi config</button>
+      <button id="btnStatus">Connection status</button>
+      <button id="btnBackup" disabled>⬇ Download backup</button>
+    </div>
+    <div class="kv" id="readOut" hidden></div>
+  </div>
+
+  <!-- 3. write -->
+  <div class="card disabled" id="cardWrite">
+    <h2><span class="step">3</span>Change endpoint</h2>
+
+    <label style="margin:0 0 12px"><input type="checkbox" id="optAdvanced"> advanced mode
+      <span class="muted">— edit each URL directly, set host3, see the raw frame</span></label>
+
+    <!-- simple -->
+    <div id="simpleBox">
+      <label>Server address — where the add-on is running</label>
+      <input type="text" id="serverAddr" placeholder="192.168.1.195">
+      <div class="derived">
+        Uses the add-on's default ports (8099 / 8098). Switch to advanced mode to change them.
+      </div>
+    </div>
+
+    <label>host1 — REST base <span class="count" id="c1">0/38</span></label>
+    <input type="text" id="host1" maxlength="38" placeholder="http://192.168.1.195:8099">
+
+    <label>host2 — MQTT over WebSocket <span class="count" id="c2">0/38</span></label>
+    <input type="text" id="host2" maxlength="38" placeholder="wss://192.168.1.195:8098/ws/">
+
+    <div id="advancedBox" hidden>
+      <label>host3 — unused on stock firmware <span class="count" id="c3">0/38</span></label>
+      <input type="text" id="host3" maxlength="38" placeholder="(leave empty)">
+      <div class="kv" id="framePreview" style="margin-top:12px">—</div>
+    </div>
+
+    <div class="row" style="margin-top:14px">
+      <button class="danger" id="btnSet">Write these endpoints</button>
+    </div>
+
+    <div class="sub" style="margin-top:12px">
+      host2 <b>must</b> use <code>wss://</code>. Given a plain <code>ws://</code> address the
+      firmware silently never connects — no error, no connection attempt — so this tool refuses to
+      write one. The self-signed certificate the add-on generates is fine; the charger does not
+      verify it.
+      <br><br>
+      Each URL is stored in a <b>39-byte field and must be ≤38 characters</b> (one byte is the
+      terminator). The whole 126-byte frame must fit in a single BLE write; a real AOC-C022
+      negotiates an MTU of 517 so this is not a practical concern, but the tool
+      <b>refuses to fragment</b> — a partial write would store a corrupt URL.
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Log</h2>
+    <div class="row" style="margin-bottom:8px">
+      <button id="btnClear">Clear</button>
+      <span class="muted" id="mtuNote"></span>
+    </div>
+    <div id="log"></div>
+  </div>
+
+</main>
+
+<script>
+"use strict";
+const $ = id => document.getElementById(id);
+
+/* ---------- protocol constants (see atc1441's RE) ---------- */
+const SVC_UUID    = '0000ffff-0000-1000-8000-00805f9b34fb';
+const WRITE_UUID  = '07af27a5-9c22-11ea-9afe-02fcdc4e7412';
+const NOTIFY_UUID = '00001234-0000-1000-8000-00805f9b34fb';
+// Observed on a real AOC-C022: it advertises as "AOC-C022-9a" (model + last
+// byte of the WiFi MAC), not the '7231N' the upstream tool filters on.
+const NAME_PREFIXES = ['AOC-', '7231N'];
+
+const CMD = { INFO:0x01, STATUS:0x03, WIFI_CFG:0x09, SET_CLOUD:0x10 };
+
+const HOST_FIELD  = 39;   // bytes reserved per URL
+const HOST_MAX    = 38;   // usable chars (1 byte reserved for the NUL terminator)
+const CLOUD_LEN   = HOST_FIELD * 3;
+
+// Default ports of the AOHI Local Server add-on, used to derive the URLs in simple mode.
+const DEF_HTTP_PORT = 8099;
+const DEF_MQTT_PORT = 8098;
+
+let device=null, writeChar=null, notifyChar=null;
+let txIdx=0, hasRead=false;
+const backup = {};
+// Resolved by onNotify when the charger acknowledges a SetCloudHost.
+let awaitingAck = null;
+
+/* ---------- framing ---------- */
+const hex = a => Array.from(a).map(b=>b.toString(16).padStart(2,'0')).join(' ');
+const ascii = a => Array.from(a).map(c=>c>=32&&c<127?String.fromCharCode(c):'·').join('');
+
+function buildFrame(cmd, idx, payload){
+  const len = payload.length;
+  // app -> device: byte[2]=0x01, length big-endian
+  const f = [0x55,0xAA,0x01, idx&0xff, cmd&0xff, 0x00, (len>>8)&0xff, len&0xff, ...payload];
+  let chk = 0; for(const b of f) chk = (chk + b) & 0xff;
+  f.push(chk);
+  return f;
+}
+function parseFrame(b){
+  if(b.length < 9 || b[0]!==0x55 || b[1]!==0xAA) return null;
+  // device -> app: byte[2]=0x00, length little-endian
+  const len = b[2]===0x01 ? ((b[6]<<8)|b[7]) : (b[6]|(b[7]<<8));
+  if(b.length < 9+len) return null;
+  const pl = b.slice(8, 8+len), chk = b[8+len];
+  let s=0; for(let i=0;i<8+len;i++) s=(s+b[i])&0xff;
+  return {idx:b[3], cmd:b[4], len, pl, chkOk:s===chk};
+}
+/** NUL-terminated ASCII string out of a fixed-width field. */
+function cstr(a, off, n){
+  let s='';
+  for(let i=off;i<off+n && i<a.length;i++){ if(!a[i]) break; s+=String.fromCharCode(a[i]); }
+  return s;
+}
+/** 3 x 39-byte NUL-padded URL fields. */
+function cloudPayload(h1,h2,h3){
+  const out = new Array(CLOUD_LEN).fill(0);
+  [h1,h2,h3].forEach((h,i)=>{
+    const bytes = new TextEncoder().encode(h||'');
+    if(bytes.length > HOST_MAX) throw new Error(`host${i+1} is ${bytes.length} bytes, max ${HOST_MAX}`);
+    bytes.forEach((b,j)=> out[i*HOST_FIELD + j] = b);
+  });
+  return out;
+}
+
+/* ---------- logging ---------- */
+function log(cls, msg, extra){
+  const d = document.createElement('div');
+  d.className = 'le ' + cls;
+  d.innerHTML = `<span class="t">${new Date().toLocaleTimeString()}</span> ${msg}` +
+                (extra ? `<div class="parse">${extra}</div>` : '');
+  $('log').appendChild(d);
+  $('log').scrollTop = $('log').scrollHeight;
+}
+$('btnClear').onclick = ()=> $('log').innerHTML='';
+
+function decodeReply(p){
+  const b = p.pl;
+  if(p.cmd===CMD.INFO && b.length>=65){
+    const mac = Array.from(b.slice(53,59)).map(x=>x.toString(16).padStart(2,'0')).join(':').toUpperCase();
+    const o = {vendor:cstr(b,0,8), model:cstr(b,10,8), sn:cstr(b,20,32), mac, firmware:cstr(b,59,11)};
+    backup.deviceInfo = o;
+    return `<b>device</b> vendor=${o.vendor} model=${o.model} SN=${o.sn} MAC=${o.mac} FW=${o.firmware}`;
+  }
+  if(p.cmd===CMD.WIFI_CFG && b.length>=67){
+    const o = {ssid:cstr(b,0,33), password:cstr(b,33,33), status:b[66]};
+    backup.wifi = o;
+    return `<b>wifi</b> ssid="${o.ssid}" password="${o.password}" status=${o.status}`;
+  }
+  if(p.cmd===CMD.STATUS && b.length>=1){
+    const ST = {1:'failed', 2:'wifi connected', 3:'cloud registration', 4:'ready'};
+    backup.status = b[0];
+    return `<b>status</b> ${ST[b[0]] || '0x'+b[0].toString(16)} (${b[0]})`;
+  }
+  return null;
+}
+
+function describe(bytes){
+  const p = parseFrame(bytes);
+  if(!p) return `<span class="muted">not a 0x55AA frame (${bytes.length}B)</span>`;
+  const parts = [`cmd=<b>0x${p.cmd.toString(16).padStart(2,'0')}</b> len=${p.len} chk=${p.chkOk?'OK':'<b style="color:var(--err)">BAD</b>'}`];
+  const dec = decodeReply(p); if(dec) parts.push(dec);
+  if(p.len) parts.push(`hex  : ${hex(p.pl)}`, `ascii: "${ascii(p.pl)}"`);
+  return parts.join('<br>');
+}
+
+/* ---------- notify reassembly ---------- */
+let rxBuf = [];
+function onNotify(ev){
+  const v = ev.target.value;
+  for(let i=0;i<v.byteLength;i++) rxBuf.push(v.getUint8(i));
+  while(rxBuf.length>=2 && !(rxBuf[0]===0x55 && rxBuf[1]===0xAA)) rxBuf.shift();
+  while(rxBuf.length>=9){
+    const len = rxBuf[6] | (rxBuf[7]<<8);       // RX length is little-endian
+    const total = 9 + len;
+    if(rxBuf.length < total) break;
+    const frame = rxBuf.slice(0,total);
+    rxBuf = rxBuf.slice(total);
+    log('rx','RX '+hex(frame).toUpperCase(), describe(frame));
+    const p = parseFrame(frame);
+    if(p && p.cmd===CMD.SET_CLOUD && awaitingAck){ awaitingAck(); awaitingAck = null; }
+    while(rxBuf.length>=2 && !(rxBuf[0]===0x55 && rxBuf[1]===0xAA)) rxBuf.shift();
+  }
+}
+
+/* ---------- connection ---------- */
+async function connect(){
+  try{
+    const opts = $('optAllDevices').checked
+      ? {acceptAllDevices:true, optionalServices:[SVC_UUID]}
+      : {filters:NAME_PREFIXES.map(p=>({namePrefix:p})), optionalServices:[SVC_UUID]};
+    device = await navigator.bluetooth.requestDevice(opts);
+    log('info',`Selected "${device.name || '(unnamed)'}"`);
+    device.addEventListener('gattserverdisconnected', onDisconnected);
+
+    const server = await device.gatt.connect();
+    const services = await server.getPrimaryServices();
+    log('info',`Connected · ${services.length} service(s)`);
+
+    const writables=[], notifiables=[];
+    for(const s of services){
+      let chars=[]; try{ chars = await s.getCharacteristics(); }catch{ continue; }
+      for(const c of chars){
+        if(c.properties.write || c.properties.writeWithoutResponse) writables.push(c);
+        if(c.properties.notify || c.properties.indicate) notifiables.push(c);
+      }
+    }
+    if(!writables.length)  throw new Error('no writable characteristic found');
+    if(!notifiables.length) throw new Error('no notify characteristic found');
+
+    // prefer the known UUIDs, fall back to whatever is available
+    writeChar  = writables.find(c=>c.uuid===WRITE_UUID)   || writables[0];
+    notifyChar = notifiables.find(c=>c.uuid===NOTIFY_UUID) || notifiables[0];
+
+    await notifyChar.startNotifications();
+    notifyChar.addEventListener('characteristicvaluechanged', onNotify);
+
+    $('connInfo').hidden=false;
+    $('connInfo').textContent =
+      `device : ${device.name || '(unnamed)'}\nwrite  : ${writeChar.uuid}\nnotify : ${notifyChar.uuid}`;
+    log('info','Notifications active on '+notifyChar.uuid);
+
+    $('btnConnect').disabled=true; $('btnDisconnect').disabled=false;
+    $('cardRead').classList.remove('disabled');
+  }catch(e){ log('err','Connect failed: '+e.message); }
+}
+function onDisconnected(){
+  log('err','Device disconnected');
+  writeChar=null; notifyChar=null; rxBuf=[];
+  $('btnConnect').disabled=false; $('btnDisconnect').disabled=true;
+  ['cardRead','cardWrite'].forEach(id=>$(id).classList.add('disabled'));
+}
+$('btnConnect').onclick = connect;
+$('btnDisconnect').onclick = ()=>{ if(device?.gatt.connected) device.gatt.disconnect(); };
+
+/* ---------- sending ---------- */
+async function send(cmd, payload=[]){
+  if(!writeChar) throw new Error('not connected');
+  const frame = buildFrame(cmd, txIdx, payload);
+  txIdx = (txIdx + 1) & 0xff;
+  const data = new Uint8Array(frame);
+
+  // The firmware does NOT reassemble across ATT writes and rejects long writes: it acts on
+  // fragment 1 alone. Fragmenting a SetCloudHost would persist a truncated URL, so never split.
+  try{
+    if(writeChar.properties.writeWithoutResponse && writeChar.writeValueWithoutResponse){
+      await writeChar.writeValueWithoutResponse(data);
+    } else {
+      await writeChar.writeValueWithResponse(data);
+    }
+  }catch(e){
+    throw new Error(
+      `${e.message} — the ${data.length}-byte frame likely exceeded the negotiated ATT MTU. ` +
+      `This tool will not fragment (a partial write would store a corrupt URL).`);
+  }
+  log('tx','TX '+hex(frame).toUpperCase(), describe(frame));
+}
+
+/** Returns true only if the frame actually went out. */
+async function sendLogged(cmd, payload=[], label=''){
+  try{ await send(cmd, payload); if(label) log('info',label); return true; }
+  catch(e){ log('err','Send failed: '+e.message); return false; }
+}
+
+/* ---------- step 2: reads ---------- */
+function markRead(){
+  hasRead = true;
+  $('btnBackup').disabled = false;
+  $('cardWrite').classList.remove('disabled');
+}
+// Only unlock writing if a read genuinely succeeded — a failed send means we
+// have no idea whether we're really talking to the charger.
+$('btnInfo').onclick   = async()=>{ if(await sendLogged(CMD.INFO,[],  'Requested device info'))   markRead(); };
+$('btnWifi').onclick   = async()=>{ if(await sendLogged(CMD.WIFI_CFG,[],'Requested WiFi config')) markRead(); };
+$('btnStatus').onclick = async()=>{ if(await sendLogged(CMD.STATUS,[], 'Requested status'))       markRead(); };
+
+$('btnBackup').onclick = ()=>{
+  const blob = new Blob([JSON.stringify({
+    savedAt: new Date().toISOString(),
+    note: 'Endpoint URLs are NOT included: the device offers no known command to read them back. ' +
+          'To return to AOHI\'s cloud, factory reset the charger and re-add it in the app.',
+    ...backup
+  }, null, 2)], {type:'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `aohi-backup-${backup.deviceInfo?.sn || 'device'}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  log('info','Backup downloaded');
+};
+
+/* ---------- step 3: write ---------- */
+
+/** Simple mode owns host1/host2: derive them from one address plus the default ports. */
+function applySimple(){
+  const addr = $('serverAddr').value.trim();
+  $('host1').value = addr ? `http://${addr}:${DEF_HTTP_PORT}` : '';
+  $('host2').value = addr ? `wss://${addr}:${DEF_MQTT_PORT}/ws/` : '';
+  updateCounts();
+}
+
+function setAdvanced(on){
+  $('simpleBox').hidden = on;
+  $('advancedBox').hidden = !on;
+  // In simple mode the URLs are derived, so showing them read-only makes it obvious
+  // what is about to be written without inviting an edit that would be overwritten.
+  $('host1').disabled = !on;
+  $('host2').disabled = !on;
+  if(!on) applySimple();
+  updateCounts();
+}
+$('optAdvanced').addEventListener('change', e=> setAdvanced(e.target.checked));
+$('serverAddr').addEventListener('input', applySimple);
+
+function updateCounts(){
+  let ok = true;
+  [['host1','c1'],['host2','c2'],['host3','c3']].forEach(([h,c])=>{
+    const n = new TextEncoder().encode($(h).value).length;
+    $(c).textContent = `${n}/${HOST_MAX}`;
+    $(c).classList.toggle('over', n>HOST_MAX);
+    $(h).classList.toggle('over', n>HOST_MAX);
+    if(n>HOST_MAX) ok=false;
+  });
+  try{
+    const f = buildFrame(CMD.SET_CLOUD, txIdx,
+                         cloudPayload($('host1').value,$('host2').value,$('host3').value));
+    $('framePreview').textContent = `${f.length} bytes\n` + hex(f).toUpperCase();
+  }catch(e){ $('framePreview').textContent = '— ' + e.message; ok=false; }
+  $('btnSet').disabled = !ok;
+}
+['host1','host2','host3'].forEach(id=>$(id).addEventListener('input',updateCounts));
+
+async function writeCloud(h1,h2,h3){
+  if(!hasRead){ log('err','Read the configuration first (step 2).'); return; }
+  if(!confirm(`Point the charger at a custom endpoint?\n\n` +
+              `host1: ${h1}\nhost2: ${h2}\nhost3: ${h3 || '(empty)'}\n\n` +
+              `This overwrites persistent configuration on the charger, and the official AOHI ` +
+              `app will no longer see it. Continue?`)) return;
+  try{
+    // The charger answers a SetCloudHost with an empty cmd 0x10 frame. Waiting for it
+    // turns "the write silently did nothing" into something visible.
+    const acked = new Promise(res=>{
+      awaitingAck = ()=>res(true);
+      setTimeout(()=>res(false), 2000);
+    });
+    await send(CMD.SET_CLOUD, cloudPayload(h1,h2,h3));
+    if(await acked){
+      log('info','✅ Charger acknowledged the new endpoints. <b>Now power-cycle it</b> — they ' +
+                 'do not take effect until it reboots. Then check the add-on log for ' +
+                 '"issued broker credentials to &lt;serial&gt;".');
+    } else {
+      log('err','⚠️ Sent, but the charger did not acknowledge it within 2s. Assume nothing was ' +
+                'stored: reconnect and try again rather than power-cycling.');
+    }
+  }catch(e){ log('err','Write failed: '+e.message); }
+  finally{ awaitingAck = null; }
+}
+
+$('btnSet').onclick = ()=>{
+  const h1 = $('host1').value.trim(), h2 = $('host2').value.trim();
+  // Writing blank fields would store 117 zero bytes and leave the charger with no
+  // server at all — almost certainly worse than any endpoint. Refuse.
+  if(!h1 || !h2){
+    log('err','host1 and host2 are both required — writing empty URLs would wipe the ' +
+              'charger\'s server configuration entirely.');
+    return;
+  }
+  // Given a plain ws:// address the firmware opens no socket at all, silently. That is
+  // indistinguishable from a dead server, so refuse rather than let it be written.
+  if(!/^wss:\/\//i.test(h2)){
+    log('err','host2 must start with <code>wss://</code>. The firmware silently discards a ' +
+              'plain <code>ws://</code> address — it never opens a socket and never reports an ' +
+              'error, so the charger would simply appear dead.');
+    return;
+  }
+  writeCloud(h1, h2, $('optAdvanced').checked ? $('host3').value.trim() : '');
+};
+
+/* ---------- boot ---------- */
+if(!navigator.bluetooth){
+  log('err','Web Bluetooth is unavailable in this browser — see the table at the top of the page. ' +
+            'Brave has it switched off by default; Firefox and Safari do not support it at all.');
+  $('btnConnect').disabled = true;
+}
+$('mtuNote').textContent = 'SetCloudHost frame = 126 bytes; needs a negotiated MTU of ~129+.';
+setAdvanced(false);
+</script>
+</body>
+</html>

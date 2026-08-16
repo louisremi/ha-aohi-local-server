@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.2
+
+The **BLE provisioning tool now lives here**, at
+<https://louisremi.github.io/ha-aohi-local-server/>, and has been reworked around the mistake it
+used to invite.
+
+- **Simple mode by default**: enter your Home Assistant machine's address and the endpoints are
+  filled in for you. Advanced mode is a checkbox away for custom ports or host3.
+- **`ws://` is now refused.** The old tool suggested it in a placeholder, and a charger given a
+  plain `ws://` address opens no socket at all — silently, with no error, looking exactly like a
+  dead server. host2 must be `wss://`.
+- **Writes are confirmed.** The tool waits for the charger's acknowledgement instead of reporting
+  success for anything it managed to send.
+- Browser guidance up front: Android + Chrome is the reliable path, Brave has Web Bluetooth off by
+  default, Firefox and Safari cannot do it at all.
+- Removed the endpoint probe (no command ever replies — settled) and the "restore official
+  endpoints" button (the factory values cannot be read back, so it was writing a guess; a factory
+  reset is the real way back).
+
+Pairing instructions also corrected: a **short press** reaches pairing mode and keeps the charger's
+current configuration, and new endpoints only apply after a **power-cycle**.
+
 ## 0.1.1
 
 Fixes the add-on failing to start with `s6-overlay-suexec: fatal: can only run as pid 1`.
