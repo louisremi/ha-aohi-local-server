@@ -128,7 +128,8 @@
   <!-- 2. read -->
   <div class="card disabled" id="cardRead">
     <h2><span class="step">2</span>Read current configuration</h2>
-    <div class="sub">Safe, read-only. Required before any write is unlocked.</div>
+    <div class="sub">Safe, read-only. Step 3 unlocks once the charger actually answers one of
+      these — proof that it is really a charger on the other end.</div>
     <div class="row" style="margin-top:10px">
       <button id="btnInfo">Device info</button>
       <button id="btnWifi">WiFi config</button>
@@ -281,6 +282,9 @@ let awaitingAck = null;
 /* ---------- framing ---------- */
 const hex = a => Array.from(a).map(b=>b.toString(16).padStart(2,'0')).join(' ');
 const ascii = a => Array.from(a).map(c=>c>=32&&c<127?String.fromCharCode(c):'·').join('');
+// Log lines are built as HTML, so anything coming off the air — a device name, an
+// SSID, a raw payload — has to be escaped on the way in.
+const esc = s => String(s).replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 
 function buildFrame(cmd, idx, payload){
   const len = payload.length;
@@ -290,10 +294,14 @@ function buildFrame(cmd, idx, payload){
   f.push(chk);
   return f;
 }
+/** Payload length from a frame header. app -> device (byte[2]=0x01) is big-endian,
+ *  device -> app is little-endian, so the direction byte picks the rule. Shared with
+ *  the notify reassembly below, which has to agree with this or it loses framing. */
+const frameLen = b => b[2]===0x01 ? ((b[6]<<8)|b[7]) : (b[6]|(b[7]<<8));
+
 function parseFrame(b){
   if(b.length < 9 || b[0]!==0x55 || b[1]!==0xAA) return null;
-  // device -> app: byte[2]=0x00, length little-endian
-  const len = b[2]===0x01 ? ((b[6]<<8)|b[7]) : (b[6]|(b[7]<<8));
+  const len = frameLen(b);
   if(b.length < 9+len) return null;
   const pl = b.slice(8, 8+len), chk = b[8+len];
   let s=0; for(let i=0;i<8+len;i++) s=(s+b[i])&0xff;
@@ -408,7 +416,8 @@ function decodeReply(p){
     const mac = Array.from(b.slice(53,59)).map(x=>x.toString(16).padStart(2,'0')).join(':').toUpperCase();
     const o = {vendor:cstr(b,0,8), model:cstr(b,10,8), sn:cstr(b,20,32), mac, firmware:cstr(b,59,11)};
     backup.deviceInfo = o;
-    return `<b>device</b> vendor=${o.vendor} model=${o.model} SN=${o.sn} MAC=${o.mac} FW=${o.firmware}`;
+    return `<b>device</b> vendor=${esc(o.vendor)} model=${esc(o.model)} SN=${esc(o.sn)} ` +
+           `MAC=${o.mac} FW=${esc(o.firmware)}`;
   }
   if(p.cmd===CMD.WIFI_CFG && b.length>=67){
     const o = {ssid:cstr(b,0,33), password:cstr(b,33,33), status:b[66]};
@@ -418,7 +427,10 @@ function decodeReply(p){
     if(o.ssid && !$('ssid').value){ $('ssid').value = o.ssid; }
     if(o.password && !$('wifiPw').value){ $('wifiPw').value = o.password; }
     updateCounts();
-    return `<b>wifi</b> ssid="${o.ssid}" password="${o.password}" status=${o.status}`;
+    // The password is never written to the log: this log has a copy button next to
+    // it and is meant to be pasted into bug reports. It is in the field above.
+    const pw = o.password ? `(${o.password.length} chars, hidden)` : '(empty)';
+    return `<b>wifi</b> ssid="${esc(o.ssid)}" password=${pw} status=${o.status}`;
   }
   if(p.cmd===CMD.STATUS && b.length>=1){
     const ST = {1:'failed', 2:'wifi connected', 3:'cloud registration', 4:'ready'};
@@ -433,7 +445,13 @@ function describe(bytes){
   if(!p) return `<span class="muted">not a 0x55AA frame (${bytes.length}B)</span>`;
   const parts = [`cmd=<b>0x${p.cmd.toString(16).padStart(2,'0')}</b> len=${p.len} chk=${p.chkOk?'OK':'<b style="color:var(--err)">BAD</b>'}`];
   const dec = decodeReply(p); if(dec) parts.push(dec);
-  if(p.len) parts.push(`hex  : ${hex(p.pl)}`, `ascii: "${ascii(p.pl)}"`);
+  if(p.len){
+    // Both of these carry the WiFi password in the clear, in the payload the user
+    // is invited to copy out of here — so they are summarised, not dumped.
+    if(p.cmd===CMD.WIFI_CFG || p.cmd===CMD.CONNECT_WIFI)
+      parts.push('<span class="muted">payload hidden — it contains WiFi credentials</span>');
+    else parts.push(`hex  : ${hex(p.pl)}`, `ascii: "${esc(ascii(p.pl))}"`);
+  }
   return parts.join('<br>');
 }
 
@@ -444,14 +462,19 @@ function onNotify(ev){
   for(let i=0;i<v.byteLength;i++) rxBuf.push(v.getUint8(i));
   while(rxBuf.length>=2 && !(rxBuf[0]===0x55 && rxBuf[1]===0xAA)) rxBuf.shift();
   while(rxBuf.length>=9){
-    const len = rxBuf[6] | (rxBuf[7]<<8);       // RX length is little-endian
-    const total = 9 + len;
+    const total = 9 + frameLen(rxBuf);
     if(rxBuf.length < total) break;
     const frame = rxBuf.slice(0,total);
     rxBuf = rxBuf.slice(total);
     log('rx','RX '+hex(frame).toUpperCase(), describe(frame));
     const p = parseFrame(frame);
-    if(p && awaitingAck) awaitingAck(p.cmd);
+    if(p){
+      // A frame came back, so we really are talking to the charger — which is
+      // what step 2 is for. Nothing before this proves it: a write without
+      // response resolves locally whether or not anything is listening.
+      markRead();
+      if(awaitingAck) awaitingAck(p.cmd);
+    }
     while(rxBuf.length>=2 && !(rxBuf[0]===0x55 && rxBuf[1]===0xAA)) rxBuf.shift();
   }
 }
@@ -463,7 +486,7 @@ async function connect(){
       ? {acceptAllDevices:true, optionalServices:[SVC_UUID]}
       : {filters:NAME_PREFIXES.map(p=>({namePrefix:p})), optionalServices:[SVC_UUID]};
     device = await navigator.bluetooth.requestDevice(opts);
-    log('info',`Selected "${device.name || '(unnamed)'}"`);
+    log('info',`Selected "${esc(device.name || '(unnamed)')}"`);
     device.addEventListener('gattserverdisconnected', onDisconnected);
 
     const server = await device.gatt.connect();
@@ -500,6 +523,8 @@ async function connect(){
 function onDisconnected(){
   log('err','Device disconnected');
   writeChar=null; notifyChar=null; rxBuf=[];
+  // The next connection may be a different device, so it has to prove itself again.
+  hasRead=false; $('btnBackup').disabled=true;
   $('btnConnect').disabled=false; $('btnDisconnect').disabled=true;
   ['cardRead','cardWrite'].forEach(id=>$(id).classList.add('disabled'));
 }
@@ -536,16 +561,20 @@ async function sendLogged(cmd, payload=[], label=''){
 }
 
 /* ---------- step 2: reads ---------- */
+// Called from onNotify, never from a click: writing is unlocked by an answer
+// coming back, not by a request going out. A frame we managed to send proves
+// nothing — writeValueWithoutResponse resolves locally even if the thing on the
+// other end is not a charger at all — and step 3 is not undoable.
 function markRead(){
+  if(hasRead) return;
   hasRead = true;
   $('btnBackup').disabled = false;
   $('cardWrite').classList.remove('disabled');
+  log('info','Charger answered — step 3 unlocked.');
 }
-// Only unlock writing if a read genuinely succeeded — a failed send means we
-// have no idea whether we're really talking to the charger.
-$('btnInfo').onclick   = async()=>{ if(await sendLogged(CMD.INFO,[],  'Requested device info'))   markRead(); };
-$('btnWifi').onclick   = async()=>{ if(await sendLogged(CMD.WIFI_CFG,[],'Requested WiFi config')) markRead(); };
-$('btnStatus').onclick = async()=>{ if(await sendLogged(CMD.STATUS,[], 'Requested status'))       markRead(); };
+$('btnInfo').onclick   = ()=> sendLogged(CMD.INFO,[],    'Requested device info');
+$('btnWifi').onclick   = ()=> sendLogged(CMD.WIFI_CFG,[],'Requested WiFi config');
+$('btnStatus').onclick = ()=> sendLogged(CMD.STATUS,[],  'Requested status');
 
 $('btnBackup').onclick = ()=>{
   const blob = new Blob([JSON.stringify({
@@ -569,6 +598,11 @@ $('btnBackup').onclick = ()=>{
  *  half-typed address would show a broken URL and invite writing it. */
 function addressLooksComplete(addr){
   if(!addr || addr.endsWith('.')) return false;
+  // This field wants a bare host and nothing else. A scheme or port typed in here
+  // would end up doubled in the derived URL — "http://http://192.168.1.42:8099" or
+  // "http://192.168.1.42:8099:8099" — which is short enough to pass the length
+  // check and would then be written to the charger for good.
+  if(/[:/\\?#\s]/.test(addr)) return false;
   const parts = addr.split('.');
   // A hostname is fine; only validate when it looks like it's meant to be an IPv4 literal.
   if(parts.every(p => /^\d+$/.test(p))) return parts.length === 4 && parts.every(p => +p < 256);
@@ -673,7 +707,9 @@ $('btnSet').onclick = ()=>{
   if(!h1 || !h2){
     if(!$('optAdvanced').checked){
       log('err','Finish the server address first — e.g. <code>192.168.1.42</code>. It is the ' +
-                'address of the machine running Home Assistant, which the add-on prints in its log.');
+                'address of the machine running Home Assistant, which the add-on prints in its ' +
+                'log. Just the address: no <code>http://</code> and no port, which are filled in ' +
+                'for you (switch to advanced mode to change the ports).');
     } else {
       log('err','host1 and host2 are both required — writing empty URLs would wipe the ' +
                 'charger\'s server configuration entirely.');

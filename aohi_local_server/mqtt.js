@@ -36,11 +36,17 @@ function decodeVarint(buf, offset) {
   return { value, bytes };
 }
 
-function readString(buf, offset) {
+/** A length-prefixed field, left as bytes. */
+function readBytes(buf, offset) {
   if (offset + 2 > buf.length) return null;
   const len = buf.readUInt16BE(offset);
   if (offset + 2 + len > buf.length) return null;
-  return { value: buf.subarray(offset + 2, offset + 2 + len).toString('utf8'), next: offset + 2 + len };
+  return { value: Buffer.from(buf.subarray(offset + 2, offset + 2 + len)), next: offset + 2 + len };
+}
+
+function readString(buf, offset) {
+  const b = readBytes(buf, offset);
+  return b && { value: b.value.toString('utf8'), next: b.next };
 }
 
 const str = (s) => {
@@ -88,7 +94,10 @@ function parse(buf) {
     if (cf & 0x04) {
       const wt = readString(buf, p); if (!wt) return out;
       p = wt.next;
-      const wm = readString(buf, p); if (!wm) return out;
+      // The will message is arbitrary bytes, not text: decoding it as UTF-8 here
+      // and re-encoding it when the will is published would mangle any payload
+      // that is not valid UTF-8.
+      const wm = readBytes(buf, p); if (!wm) return out;
       p = wm.next;
       out.will = { topic: wt.value, payload: wm.value, qos: (cf >> 3) & 3, retain: Boolean(cf & 0x20) };
     }

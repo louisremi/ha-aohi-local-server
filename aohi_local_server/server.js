@@ -45,19 +45,35 @@ const pick = (key, env, fallback) => {
   return fallback;
 };
 
-/** First non-internal IPv4 address, used when lan_ip is left blank. */
-function detectLanIp() {
-  for (const addrs of Object.values(os.networkInterfaces())) {
+/**
+ * Non-internal IPv4 addresses, best candidate first, used when lan_ip is blank.
+ *
+ * Container and virtual bridges are sorted last rather than dropped: on a Home
+ * Assistant host `docker0` (172.17.0.1) and `hassio` (172.30.32.1) are
+ * non-internal too, and interface order is not guaranteed, so simply taking the
+ * first one can yield an address no charger on the LAN can reach. That address
+ * then gets written into a charger over Bluetooth, which only a factory reset
+ * undoes — worth being careful about. They stay in the list because a plain
+ * `docker run` sees only its own bridged interface, which is the right answer
+ * there.
+ */
+const BRIDGE_IFACE = /^(docker|hassio|br-|veth|virbr|tun|tap|zt|wg)/i;
+function lanCandidates() {
+  const lan = [], bridged = [];
+  for (const [name, addrs] of Object.entries(os.networkInterfaces())) {
     for (const a of addrs || []) {
-      if (a.family === 'IPv4' && !a.internal) return a.address;
+      if (a.family !== 'IPv4' || a.internal) continue;
+      (BRIDGE_IFACE.test(name) ? bridged : lan).push(a.address);
     }
   }
-  return '';
+  return lan.concat(bridged);
 }
 
 const HTTP_PORT = parseInt(pick('http_port', 'HTTP_PORT', 8099), 10);
 const MQTT_PORT = parseInt(pick('mqtt_port', 'MQTT_PORT', 8098), 10);
-const LAN_IP = String(pick('lan_ip', 'LAN_IP', '') || detectLanIp());
+const CONFIGURED_IP = String(pick('lan_ip', 'LAN_IP', '') || '');
+const LAN_CANDIDATES = CONFIGURED_IP ? [] : lanCandidates();
+const LAN_IP = CONFIGURED_IP || LAN_CANDIDATES[0] || '';
 // /data is the add-on's persistent volume, so the certificate survives updates.
 const CERT_DIR = process.env.CERT_DIR
   || (fs.existsSync('/data') ? '/data/certs' : path.join(__dirname, 'certs'));
@@ -69,6 +85,13 @@ const VERBOSE = String(pick('verbose', 'VERBOSE', '')) === 'true'
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 const vlog = (...a) => { if (VERBOSE) log(...a); };
+
+// Guessing wrong here is expensive: the address below is what gets written into
+// a charger over Bluetooth, and only a factory reset takes it back.
+if (LAN_CANDIDATES.length > 1) {
+  log(`several addresses on this host (${LAN_CANDIDATES.join(', ')}); using ${LAN_IP}.`);
+  log('set "lan_ip" in the add-on options if that is not the one your chargers can reach.');
+}
 
 /* ------------------------------------------------------------ certificate -- */
 
@@ -176,6 +199,9 @@ function handlePacket(client, pkt) {
   }
 }
 
+/** Ceiling on unparsed bytes held per connection; real packets are tiny. */
+const MAX_BUFFER = 1 << 20;
+
 function attachBroker(wss) {
   wss.on('connection', (ws, req) => {
     const client = {
@@ -193,6 +219,17 @@ function attachBroker(wss) {
       buffer = Buffer.concat([buffer, Buffer.isBuffer(data) ? data : Buffer.from(data)]);
       const { packets, rest } = mqtt.chunk(buffer);
       buffer = rest;
+      // A header declaring a huge remaining length, or a stream of junk that
+      // never forms a packet, would otherwise buffer up to 256MB per connection
+      // and wedge that connection silently. Nothing here sends packets anywhere
+      // near this size.
+      if (buffer.length > MAX_BUFFER) {
+        log(`dropping ${client.id || 'an unidentified client'}: `
+          + `${buffer.length}B buffered with no complete packet`);
+        buffer = Buffer.alloc(0);
+        ws.close();
+        return;
+      }
       for (const pkt of packets) {
         try { handlePacket(client, pkt); }
         catch (err) { log(`error handling packet from ${client.id}: ${err.message}`); }
@@ -218,7 +255,7 @@ function attachBroker(wss) {
       // offline state reaches anyone watching.
       if (!client.graceful && client.will) {
         vlog(`publishing will for ${client.id}`);
-        route(client.will.topic, Buffer.from(client.will.payload), client.id);
+        route(client.will.topic, client.will.payload, client.id);
       }
       if (client.id) log(`${client.id} disconnected${client.graceful ? '' : ' (unexpected)'}`);
     });
@@ -303,7 +340,14 @@ httpServer.listen(HTTP_PORT, '0.0.0.0', () =>
 const mqttServer = https.createServer(tls, bootstrapHandler);
 attachBroker(new WebSocketServer({
   server: mqttServer,
-  handleProtocols: (protocols) => (protocols && protocols.has('mqtt') ? 'mqtt' : undefined),
+  // RFC 6455 requires a client that asked for a subprotocol to fail the
+  // connection when the handshake comes back without one, so answering only
+  // "mqtt" would drop any client asking for the MQTT 3.1 spelling
+  // "mqttv3.1" — which is exactly the protocol level the charger speaks.
+  // Prefer "mqtt", otherwise echo whatever was offered.
+  handleProtocols: (protocols) => (protocols && protocols.has('mqtt')
+    ? 'mqtt'
+    : protocols.values().next().value),
 }));
 mqttServer.on('tlsClientError', (err, sock) =>
   vlog(`TLS handshake failed from ${sock.remoteAddress}: ${err.code || err.message}`));

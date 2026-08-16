@@ -84,7 +84,9 @@ async function main() {
         let o = 1; while (b[o] & 0x80) o++; o++;
         const topic = readStr(b, o);
         let msg; try { msg = JSON.parse(b.subarray(topic.n).toString()); } catch { return; }
-        if (msg.cmd === 3) resolve(msg.result);
+        // Only a reply carrying a result proves the round-trip; anything else
+        // leaves the promise pending so the 15s timeout reports honestly.
+        if (msg.cmd === 3 && msg.result) resolve(msg.result);
       }
     });
     ws.on('error', (err) => { console.log(`FAIL: ${err.message}`); process.exit(1); });

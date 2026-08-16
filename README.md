@@ -32,9 +32,10 @@ It is **entirely optional**. The integration works fine against the cloud withou
 
 ## Before you start — this is not reversible in place
 
-Pointing a charger at this add-on requires a **factory reset and Bluetooth reprovisioning**, and
-afterwards it will no longer work with the official AOHI mobile app. Going back means another
-factory reset and re-adding it in the app.
+Pointing a charger at this add-on means **reprovisioning it over Bluetooth**, and afterwards it
+will no longer work with the official AOHI mobile app. Getting there needs no factory reset — the
+provisioning tool reads the charger's current WiFi credentials back out of it — but **going back to
+the cloud does**: a factory reset, then re-adding it in the app.
 
 A charger provisioned here is also **committed to this address**. If the add-on is stopped, or the
 machine running Home Assistant is off, that charger has nothing to talk to and is simply
