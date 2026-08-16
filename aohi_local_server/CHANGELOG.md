@@ -8,6 +8,12 @@ The Home Assistant base image ships s6-overlay v3, whose init insists on being p
 own init took that slot, so s6 aborted before the server ever ran. Turning it off with
 `init: false` is what the base image expects.
 
+Also brings the add-on configuration up to date with current Home Assistant:
+
+- Drops `armv7`, which Home Assistant no longer supports as of 2025.12
+- Drops the `map` entry for `/data`, which is always mounted and writable anyway
+- Drops `boot`, which was set to its own default
+
 ## 0.1.0
 
 First release.
