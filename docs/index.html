@@ -55,6 +55,10 @@
   table.browsers td.err{color:var(--err)}
   input[type=text]:disabled{opacity:.75;background:#0f1116;cursor:not-allowed}
   .derived{color:var(--muted);font-size:11.5px;margin-top:2px}
+  .copied{color:var(--ok);font-size:12px;font-weight:600}
+  .copied.bad{color:var(--err)}
+  ol.next{margin:10px 0 0;padding-left:20px}
+  ol.next li{margin-bottom:8px}
   [hidden]{display:none !important}
 </style>
 </head>
@@ -110,8 +114,13 @@
       <label style="margin:0"><input type="checkbox" id="optAllDevices"> show all BLE devices</label>
     </div>
     <div class="sub" style="margin-top:8px">
-      Put the charger in pairing mode first. It advertises as <code>AOC-C022-&lt;xx&gt;</code>
-      (older units may use <code>7231N</code>); tick the box above if it doesn't appear.
+      <b>Factory reset the charger first</b> — hold its button until it resets. A short press also
+      makes it appear here and answer normally, but anything you write in that state is
+      acknowledged and then <b>silently discarded</b>: only a factory-reset charger stores new
+      endpoints.
+      <br><br>
+      It advertises as <code>AOC-C022-&lt;xx&gt;</code> (older units may use <code>7231N</code>);
+      tick the box above if it doesn't appear.
     </div>
     <div class="kv" id="connInfo" hidden></div>
   </div>
@@ -138,10 +147,12 @@
 
     <!-- simple -->
     <div id="simpleBox">
-      <label>Server address — where the add-on is running</label>
-      <input type="text" id="serverAddr" placeholder="192.168.1.195">
+      <label>Server address — the machine running Home Assistant</label>
+      <input type="text" id="serverAddr" value="192.168.1." inputmode="decimal" autocomplete="off">
       <div class="derived">
-        Uses the add-on's default ports (8099 / 8098). Switch to advanced mode to change them.
+        Finish the address, e.g. <code>192.168.1.42</code>. The add-on prints its own address in
+        its log when it starts. Uses the default ports (8099 / 8098) — switch to advanced mode to
+        change them.
       </div>
     </div>
 
@@ -174,10 +185,47 @@
     </div>
   </div>
 
+  <!-- 4. use it -->
+  <div class="card">
+    <h2><span class="step">4</span>Use it in Home Assistant</h2>
+    <div class="sub">
+      Once written, the charger talks only to your own server. Nothing here needs Bluetooth, so you
+      can do it from any machine.
+    </div>
+    <ol class="next">
+      <li><b>Power-cycle the charger.</b> The endpoints written above do not take effect until it
+        reboots — unplug it, wait a few seconds, plug it back in.</li>
+      <li>Check the <b>AOHI Local Server</b> add-on log. Within a minute or two it should print
+        <code>issued broker credentials to &lt;serial&gt;</code>. If it never does, the charger has
+        not reached the add-on: confirm the address you wrote, and that the charger joined WiFi.</li>
+      <li>In Home Assistant, go to <b>Settings → Devices &amp; services → Add integration</b> and
+        choose <b>AOHI Smart Charger</b>. If you have not installed it yet, it is available through
+        HACS from
+        <a href="https://github.com/louisremi/ha-aohi-charger">ha-aohi-charger</a>.</li>
+      <li>Pick <b>Local server</b> when asked. The address field is already filled in with the
+        machine Home Assistant is running on, which is the right answer when the add-on is
+        installed there. Leave the ports at <code>8099</code> and <code>8098</code> unless you
+        changed them.</li>
+      <li>Your charger appears with a switch per port, plus power, temperature and charging-mode
+        entities.</li>
+    </ol>
+    <div class="banner" style="margin-top:14px">
+      <b>"Connected, but no chargers have registered with that server yet"</b> means the add-on is
+      running fine but no charger has ever reached it. That is step 1 or 2 above, not a problem
+      with the integration — most often the charger simply has not been power-cycled yet.
+    </div>
+  </div>
+
   <div class="card">
     <h2>Log</h2>
     <div class="row" style="margin-bottom:8px">
+      <button class="primary" id="btnCopy">📋 Copy log</button>
       <button id="btnClear">Clear</button>
+      <span id="copyMsg" class="copied" hidden></span>
+    </div>
+    <div class="sub" style="margin-bottom:8px">
+      Provisioning is easiest on a phone, but reading a log is not — copy it here and paste it
+      somewhere roomier.
       <span class="muted" id="mtuNote"></span>
     </div>
     <div id="log"></div>
@@ -261,6 +309,67 @@ function log(cls, msg, extra){
   $('log').scrollTop = $('log').scrollHeight;
 }
 $('btnClear').onclick = ()=> $('log').innerHTML='';
+
+/* ---------- copying the log out ---------- */
+
+/** Log entries carry their detail in nested divs and <br>s, so textContent alone
+ *  would run everything onto one line. Turn the markup back into line breaks. */
+function entryToText(el){
+  const holder = document.createElement('div');
+  holder.innerHTML = el.innerHTML
+    .replace(/<br\s*\/?>/gi, '\n')
+    // Both ends of a nested block, or the detail div would run onto the line above it.
+    .replace(/<div[^>]*>/gi, '\n')
+    .replace(/<\/div>/gi, '\n');
+  return holder.textContent.split('\n').map(l=>l.trimEnd())
+              .filter((l,i,a)=> l || (i && a[i-1]))   // collapse blank runs
+              .join('\n').trim();
+}
+
+function logAsText(){
+  const entries = Array.from($('log').children).map(entryToText).filter(Boolean);
+  if(!entries.length) return '';
+  // The user agent is worth carrying: most of what goes wrong here is browser-specific.
+  return [`AOHI BLE provisioning log — ${new Date().toISOString()}`,
+          navigator.userAgent, ''].concat(entries).join('\n');
+}
+
+function flash(msg, bad){
+  const el = $('copyMsg');
+  el.textContent = msg;
+  el.classList.toggle('bad', !!bad);
+  el.hidden = false;
+  clearTimeout(flash.t);
+  flash.t = setTimeout(()=>{ el.hidden = true; }, 2500);
+}
+
+async function copyText(text){
+  // navigator.clipboard needs a secure context, which rules it out over file://.
+  if(navigator.clipboard && window.isSecureContext){
+    try{ await navigator.clipboard.writeText(text); return true; }
+    catch{ /* fall through to the textarea route */ }
+  }
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.setAttribute('readonly','');
+  ta.style.position = 'fixed';
+  ta.style.top = '-1000px';
+  document.body.appendChild(ta);
+  ta.select();
+  ta.setSelectionRange(0, text.length);
+  let ok = false;
+  try{ ok = document.execCommand('copy'); }catch{ ok = false; }
+  document.body.removeChild(ta);
+  return ok;
+}
+
+$('btnCopy').onclick = async()=>{
+  const text = logAsText();
+  if(!text){ flash('Nothing to copy yet', true); return; }
+  const lines = text.split('\n').length;
+  if(await copyText(text)) flash(`✓ Copied ${lines} lines`);
+  else flash('Could not copy — select the log and copy manually', true);
+};
 
 function decodeReply(p){
   const b = p.pl;
@@ -419,13 +528,31 @@ $('btnBackup').onclick = ()=>{
 
 /* ---------- step 3: write ---------- */
 
+/** The field starts as "192.168.1." so only the last part needs typing; a trailing dot,
+ *  or a dotted quad with a missing octet, means it isn't finished yet. Deriving from a
+ *  half-typed address would show a broken URL and invite writing it. */
+function addressLooksComplete(addr){
+  if(!addr || addr.endsWith('.')) return false;
+  const parts = addr.split('.');
+  // A hostname is fine; only validate when it looks like it's meant to be an IPv4 literal.
+  if(parts.every(p => /^\d+$/.test(p))) return parts.length === 4 && parts.every(p => +p < 256);
+  return true;
+}
+
 /** Simple mode owns host1/host2: derive them from one address plus the default ports. */
 function applySimple(){
   const addr = $('serverAddr').value.trim();
-  $('host1').value = addr ? `http://${addr}:${DEF_HTTP_PORT}` : '';
-  $('host2').value = addr ? `wss://${addr}:${DEF_MQTT_PORT}/ws/` : '';
+  const ok = addressLooksComplete(addr);
+  $('host1').value = ok ? `http://${addr}:${DEF_HTTP_PORT}` : '';
+  $('host2').value = ok ? `wss://${addr}:${DEF_MQTT_PORT}/ws/` : '';
   updateCounts();
 }
+
+// Tapping the field should land the caret after the prefix, not in the middle of it.
+$('serverAddr').addEventListener('focus', e=>{
+  const n = e.target.value.length;
+  requestAnimationFrame(()=> e.target.setSelectionRange(n, n));
+});
 
 function setAdvanced(on){
   $('simpleBox').hidden = on;
@@ -489,8 +616,13 @@ $('btnSet').onclick = ()=>{
   // Writing blank fields would store 117 zero bytes and leave the charger with no
   // server at all — almost certainly worse than any endpoint. Refuse.
   if(!h1 || !h2){
-    log('err','host1 and host2 are both required — writing empty URLs would wipe the ' +
-              'charger\'s server configuration entirely.');
+    if(!$('optAdvanced').checked){
+      log('err','Finish the server address first — e.g. <code>192.168.1.42</code>. It is the ' +
+                'address of the machine running Home Assistant, which the add-on prints in its log.');
+    } else {
+      log('err','host1 and host2 are both required — writing empty URLs would wipe the ' +
+                'charger\'s server configuration entirely.');
+    }
     return;
   }
   // Given a plain ws:// address the firmware opens no socket at all, silently. That is

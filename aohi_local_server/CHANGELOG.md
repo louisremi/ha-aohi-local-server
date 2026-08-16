@@ -19,8 +19,12 @@ used to invite.
   endpoints" button (the factory values cannot be read back, so it was writing a guess; a factory
   reset is the real way back).
 
-Pairing instructions also corrected: a **short press** reaches pairing mode and keeps the charger's
-current configuration, and new endpoints only apply after a **power-cycle**.
+Two further additions: a **copy button for the log**, since provisioning is easiest on a phone but
+reading a log is not, and a **step 4** covering what to do in Home Assistant afterwards.
+
+Pairing instructions corrected as well. A **factory reset is required** — a short press makes the
+charger connectable and it will acknowledge new endpoints, but it discards them. New endpoints then
+only apply after a **power-cycle**.
 
 The add-on also has an icon and logo now, instead of a blank placeholder in the store.
 
