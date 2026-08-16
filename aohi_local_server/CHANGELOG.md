@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.1
+
+Fixes the add-on failing to start with `s6-overlay-suexec: fatal: can only run as pid 1`.
+
+The Home Assistant base image ships s6-overlay v3, whose init insists on being pid 1. Docker's
+own init took that slot, so s6 aborted before the server ever ran. Turning it off with
+`init: false` is what the base image expects.
+
 ## 0.1.0
 
 First release.

@@ -1,5 +1,5 @@
 name: AOHI Local Server
-version: "0.1.0"
+version: "0.1.1"
 slug: aohi_local_server
 description: Run AOHI smart chargers entirely on your local network, with no cloud
 url: https://github.com/louisremi/ha-aohi-local-server
@@ -15,6 +15,11 @@ host_network: true
 
 startup: services
 boot: auto
+
+# The Home Assistant base image ships s6-overlay v3, whose init insists on being
+# pid 1. Docker's own init would take that slot and s6 aborts with
+# "s6-overlay-suexec: fatal: can only run as pid 1", so it has to be turned off.
+init: false
 
 # The generated certificate lives in /data so it survives add-on updates.
 map:
