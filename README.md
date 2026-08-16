@@ -5,6 +5,14 @@ dependency.
 
 ## Install
 
+[![Add this add-on repository to your Home Assistant instance.](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Flouisremi%2Fha-aohi-local-server)
+
+The button adds this repository to your add-on store. Then install **AOHI Local Server** and start
+it.
+
+If the button does nothing — it relies on [My Home Assistant](https://my.home-assistant.io/),
+which has to be enabled on your instance — add it by hand instead:
+
 1. In Home Assistant: **Settings → Add-ons → Add-on Store**
 2. Top-right menu → **Repositories** → add
    `https://github.com/louisremi/ha-aohi-local-server`
